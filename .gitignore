@@ -1,0 +1,46 @@
+# Ignore Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+*.env
+
+# Docker and related files
+*.log
+*.pid
+*.sock
+docker-compose.override.yml
+docker-compose.override.local.yml
+
+# PyCharm or other IDE settings
+.idea/
+.vscode/
+
+# FastAPI or any other generated files
+*.db
+*.sqlite3
+*.db-journal
+
+# Python cache and coverage
+*.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+*.hypothesis/
+
+# Logs
+logs/
+*.log
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini

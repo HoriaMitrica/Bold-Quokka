@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  youtube-audio-service:
+    container_name: youtube-audio-service
+    build:
+      context: ./youtube-audio-service
+      dockerfile: Dockerfile
+    ports:
+      - "${YOUTUBE_AUDIO_SERVICE_PORT}:8000"
+    volumes:
+      - ./youtube-audio-service:/app
+      - ./downloaded_audio:/app/downloaded_audio
+      - youtube_audio:/app/audio
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT}
+      - SERVICE_NAME=youtube-audio-service
+      - DB_SERVICE_URL=${DB_SERVICE_URL}
+    restart: unless-stopped
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db-service:
+    container_name: db-service
+    build:
+      context: ./db-service
+      dockerfile: Dockerfile
+    ports:
+      - "${DB_SERVICE_PORT}:${DB_SERVICE_PORT}"
+    volumes:
+      - ./db-service:/app
+    environment:
+      - SERVICE_NAME=db-service
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=bold-quokka-postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+    depends_on:
+      - bold-quokka-postgres
+    restart: unless-stopped
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${DB_SERVICE_PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  bold-quokka-postgres:
+    container_name: bold-quokka-postgres
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bold-quokka-pgadmin4:
+    container_name: bold-quokka-pgadmin4
+    image: dpage/pgadmin4
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    depends_on:
+      - bold-quokka-postgres
+    networks:
+      - microservices-network
+
+volumes:
+  youtube_audio:
+  postgres_data:
+
+networks:
+  microservices-network:
+    driver: bridge
