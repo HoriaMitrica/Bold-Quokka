@@ -42,7 +42,7 @@ async def extract_audio(request: YouTubeRequest):
             'format': 'bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
+                'preferredcodec': 'wav',
                 'preferredquality': '192',
             }],
             'outtmpl': str(AUDIO_DIR / '%(id)s.%(ext)s'),
@@ -67,14 +67,14 @@ async def extract_audio(request: YouTubeRequest):
                     raise HTTPException(status_code=400, detail="Could not extract video information")
                 
                 video_id = info.get('id', 'unknown')
-                audio_file = AUDIO_DIR / f"{video_id}.mp3"
+                audio_file = AUDIO_DIR / f"{video_id}.wav"
                 
                 if not audio_file.exists():
                     logger.error(f"Audio file was not created: {audio_file}")
                     raise HTTPException(status_code=500, detail="Audio file was not created successfully")
 
                 # Copy the file to local directory
-                local_audio_file = LOCAL_AUDIO_DIR / f"{video_id}.mp3"
+                local_audio_file = LOCAL_AUDIO_DIR / f"{video_id}.wav"
                 with open(audio_file, 'rb') as src, open(local_audio_file, 'wb') as dst:
                     dst.write(src.read())
 
@@ -82,7 +82,7 @@ async def extract_audio(request: YouTubeRequest):
                 db_service_url = os.getenv("DB_SERVICE_URL", "http://db-service:8001")
                 video_data = {
                     "video_id": video_id,
-                    "title": info.get('title', 'Unknown Title'),
+                    "name": info.get('title', 'Unknown Title'),
                     "audio_file_path": str(local_audio_file),
                     "duration": info.get('duration')
                 }
@@ -105,7 +105,7 @@ async def extract_audio(request: YouTubeRequest):
                 return {
                     "status": "success",
                     "video_id": video_id,
-                    "title": info.get('title', 'Unknown Title'),
+                    "name": info.get('title', 'Unknown Title'),
                     "audio_file": str(local_audio_file),
                     "duration": info.get('duration'),
                 }

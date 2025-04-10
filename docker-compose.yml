@@ -10,8 +10,8 @@ services:
       - "${YOUTUBE_AUDIO_SERVICE_PORT}:8000"
     volumes:
       - ./youtube-audio-service:/app
-      - ./downloaded_audio:/app/downloaded_audio
-      - youtube_audio:/app/audio
+      - ./downloaded_audio:/downloaded_audio
+      - youtube_audio:/audio
     environment:
       - ENVIRONMENT=${ENVIRONMENT}
       - SERVICE_NAME=youtube-audio-service
@@ -21,6 +21,34 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  audio-text-service:
+    container_name: audio-text-service
+    build:
+      context: ./audio-text-service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./audio-text-service:/app
+      - ./downloaded_text:/downloaded_text
+      - ./downloaded_audio:/downloaded_audio
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT}
+      - SERVICE_NAME=audio-text-service
+      - DB_SERVICE_URL=${DB_SERVICE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - db-service
+    restart: unless-stopped
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -89,6 +117,7 @@ services:
 volumes:
   youtube_audio:
   postgres_data:
+  audio-text-service:
 
 networks:
   microservices-network:

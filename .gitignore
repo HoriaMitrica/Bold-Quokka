@@ -44,3 +44,12 @@ logs/
 # Windows
 Thumbs.db
 Desktop.ini
+
+downloaded_audio/
+downloaded_text/
+
+# Ignore all files in the audio-text-service directory
+audio-text-service/*
+
+# Ignore all files in the youtube-audio-service directory
+youtube-audio-service/*

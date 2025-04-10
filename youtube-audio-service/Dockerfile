@@ -8,8 +8,6 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Create directory for audio files
-RUN mkdir -p /app/audio
 
 # Copy requirements and install dependencies
 COPY requirements.txt .
