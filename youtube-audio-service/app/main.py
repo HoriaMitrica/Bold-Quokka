@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, HttpUrl
 import yt_dlp
 import os
@@ -7,21 +7,33 @@ import logging
 import httpx
 import json
 from dotenv import load_dotenv
+from .config import get_settings
 
 # Load environment variables from .env file
 load_dotenv()
 
-app = FastAPI(title="YouTube Audio Extractor Service")
+# Get settings
+settings = get_settings()
+
+# Create FastAPI app
+app = FastAPI(
+    title=settings.service_name,
+    version=settings.service_version,
+    openapi_url=f"{settings.api_prefix}/openapi.json",
+    docs_url=f"{settings.api_prefix}/docs",
+    redoc_url=f"{settings.api_prefix}/redoc",
+)
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Create directories for storing audio files
-AUDIO_DIR = Path("/app/audio")
-LOCAL_AUDIO_DIR = Path("./downloaded_audio")
+AUDIO_DIR = Path(settings.audio_dir)
 AUDIO_DIR.mkdir(exist_ok=True)
-LOCAL_AUDIO_DIR.mkdir(exist_ok=True)
 
 class YouTubeRequest(BaseModel):
     url: HttpUrl
@@ -30,11 +42,11 @@ class YouTubeRequest(BaseModel):
 async def root():
     return {"message": "Welcome to the Microservice API"}
 
-@app.get("/health")
+@app.get(f"{settings.api_prefix}/health")
 async def health_check():
     return {"status": "healthy"}
 
-@app.post("/extract-audio")
+@app.post(f"{settings.api_prefix}/extract-audio")
 async def extract_audio(request: YouTubeRequest):
     try:
         # Configure yt-dlp options with more robust settings
@@ -73,31 +85,36 @@ async def extract_audio(request: YouTubeRequest):
                     logger.error(f"Audio file was not created: {audio_file}")
                     raise HTTPException(status_code=500, detail="Audio file was not created successfully")
 
-                # Copy the file to local directory
-                local_audio_file = LOCAL_AUDIO_DIR / f"{video_id}.wav"
-                with open(audio_file, 'rb') as src, open(local_audio_file, 'wb') as dst:
-                    dst.write(src.read())
-
                 # Create video record in database
-                db_service_url = os.getenv("DB_SERVICE_URL", "http://db-service:8001")
+                db_service_url = settings.db_service_url
                 video_data = {
                     "video_id": video_id,
-                    "name": info.get('title', 'Unknown Title'),
-                    "audio_file_path": str(local_audio_file),
-                    "duration": info.get('duration')
+                    "title": info.get('title', 'Unknown Title'),
+                    "audio_file_path": str(audio_file),
+                    "duration": info.get('duration'),
+                    "text_status": "NOT_TEXT"
                 }
+
+                logger.info(f"Attempting to create database record with data: {json.dumps(video_data, indent=2)}")
+                logger.info(f"Database service URL: {db_service_url}{settings.api_prefix}/videos")
 
                 async with httpx.AsyncClient() as client:
                     try:
                         response = await client.post(
-                            f"{db_service_url}/videos/",
-                            json=video_data
+                            f"{db_service_url}{settings.api_prefix}/videos",
+                            json=video_data,
+                            timeout=30.0  # Add timeout
                         )
+                        logger.info(f"Database service response status: {response.status_code}")
+                        logger.info(f"Database service response body: {response.text}")
+                        
                         response.raise_for_status()
                         db_record = response.json()
-                        logger.info(f"Created database record: {db_record}")
+                        logger.info(f"Successfully created database record: {json.dumps(db_record, indent=2)}")
                     except httpx.HTTPError as e:
-                        logger.error(f"Failed to create database record: {str(e)}")
+                        logger.error(f"Failed to create database record. Error: {str(e)}")
+                        logger.error(f"Response status: {e.response.status_code if hasattr(e, 'response') else 'N/A'}")
+                        logger.error(f"Response body: {e.response.text if hasattr(e, 'response') else 'N/A'}")
                         # Continue even if database operation fails
                         # The file is still saved locally
 
@@ -105,8 +122,8 @@ async def extract_audio(request: YouTubeRequest):
                 return {
                     "status": "success",
                     "video_id": video_id,
-                    "name": info.get('title', 'Unknown Title'),
-                    "audio_file": str(local_audio_file),
+                    "title": info.get('title', 'Unknown Title'),
+                    "audio_file": str(audio_file),
                     "duration": info.get('duration'),
                 }
             except yt_dlp.utils.DownloadError as e:
@@ -124,7 +141,6 @@ async def extract_audio(request: YouTubeRequest):
                         detail="YouTube player extraction failed. This might be due to YouTube changes or network issues. Please try again later."
                     )
                 raise HTTPException(status_code=500, detail=f"YouTube download error: {error_msg}")
-
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e)) 

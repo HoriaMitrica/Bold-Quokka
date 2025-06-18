@@ -34,16 +34,16 @@ class Video(VideoBase):
 
 class TextContentBase(BaseModel):
     video_id: str
-    name: str
+    title: str
     text_file_path: str
 
 class TextContentCreate(TextContentBase):
-    id: Optional[UUID] = None
-
+    pass
+    
 class TextContent(BaseModel):
     id: Optional[UUID] = None
     video_id: str
-    name: str
+    title: str
     text_file_path: str
     created_at: Optional[datetime] = None
 
