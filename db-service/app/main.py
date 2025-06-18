@@ -120,6 +120,13 @@ def read_text_content(text_content_id: UUID, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Text content not found")
     return text_content
 
+@app.get(f"{settings.api_prefix}/text-contents/by-video/{{video_id}}", response_model=schemas.TextContent)
+def read_text_content_by_video_id(video_id: str, db: Session = Depends(get_db)):
+    text_content = db.query(models.TextContent).filter(models.TextContent.video_id == video_id).first()
+    if text_content is None:
+        raise HTTPException(status_code=404, detail="Text content not found")
+    return text_content
+
 @app.get(f"{settings.api_prefix}/videos/not-text/", response_model=List[schemas.Video])
 def read_videos_not_text(db: Session = Depends(get_db)):
     videos = db.query(models.Video).filter(models.Video.text_status == "NOT_TEXT").all()

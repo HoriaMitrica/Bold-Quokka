@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     
     # Database Configuration
     postgres_user: str = "postgres"
-    postgres_password: str = "postgres"
-    postgres_db: str = "videos"
+    postgres_password: str = "Octavian22"
+    postgres_db: str = "youtube_audio"
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     
