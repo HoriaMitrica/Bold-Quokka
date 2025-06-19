@@ -13,6 +13,7 @@ kill $(lsof -t -i:8002) 2>/dev/null || true
 kill $(lsof -t -i:8003) 2>/dev/null || true
 kill $(lsof -t -i:8004) 2>/dev/null || true
 kill $(lsof -t -i:8005) 2>/dev/null || true
+kill $(lsof -t -i:8006) 2>/dev/null || true
 kill $(lsof -t -i:8007) 2>/dev/null || true
 
 # Create necessary directories
@@ -53,6 +54,12 @@ cd rag-indexer
 uvicorn app.main:app --host 0.0.0.0 --port 8005 --reload &
 cd ..
 
+# Start the chat service
+echo "Starting Chat service..."
+cd chat-service
+uvicorn app.main:app --host 0.0.0.0 --port 8006 --reload &
+cd ..
+
 # # Start the frontend service
 # echo "Starting frontend service..."
 # cd frontend
@@ -74,6 +81,7 @@ echo "Database service: http://localhost:8001"
 echo "Audio-text service: http://localhost:8002"
 echo "Youtube-audio service: http://localhost:8003"
 echo "RAG Indexer service: http://localhost:8005"
+echo "Chat service: http://localhost:8006"
 echo "Qdrant Admin service: http://localhost:8007"
 # echo "Frontend: http://localhost:8004"
 

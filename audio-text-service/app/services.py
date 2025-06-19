@@ -12,19 +12,15 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 from .config import get_settings
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Get settings
 settings = get_settings()
 
 class AudioTextService:
     def __init__(self):
         try:
-            # Configure CUDA settings
             if torch.cuda.is_available():
-                # Enable TF32 for better performance
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
                 self.device = torch.device("cuda")
@@ -33,7 +29,6 @@ class AudioTextService:
                 self.device = torch.device("cpu")
                 logger.info("CUDA is not available. Using CPU.")
             
-            # Initialize Whisper model
             logger.info("Loading Whisper model...")
             try:
                 model_id = "openai/whisper-large-v3-turbo"
@@ -48,6 +43,10 @@ class AudioTextService:
                 
                 self.processor = AutoProcessor.from_pretrained(model_id)
                 
+                # Configure processor to handle attention masks properly for Whisper models
+                # Whisper models don't have a separate pad token, so we need to handle this carefully
+                self.processor.tokenizer.padding_side = "right"
+                
                 self.whisper_pipeline = pipeline(
                     "automatic-speech-recognition",
                     model=self.whisper_model,
@@ -56,13 +55,7 @@ class AudioTextService:
                     torch_dtype=torch_dtype,
                     device=self.device,
                     model_kwargs={
-                        "use_cache": True,
-                        "forced_decoder_ids": None  # Remove forced decoder IDs
-                    },
-                    generate_kwargs={
-                        "language": "romanian",
-                        "task": "transcribe",
-                        "return_timestamps": True
+                        "use_cache": True
                     }
                 )
                 logger.info("Successfully loaded Whisper model")
@@ -175,11 +168,9 @@ class AudioTextService:
                     preprocessed_path,
                     chunk_length_s=30,
                     stride_length_s=5,
-                    return_timestamps=True,
                     generate_kwargs={
                         "language": "romanian",
-                        "task": "transcribe",
-                        "return_timestamps": True
+                        "task": "transcribe"
                     }
                 )
                 
@@ -187,18 +178,30 @@ class AudioTextService:
                 os.remove(preprocessed_path)
                 
                 # Save transcription results
-                text_path = settings.text_dir / f"{video_id}.txt"
+                # Use absolute path to ensure we write to the correct directory
+                text_path = Path.cwd().parent / "downloaded_text" / f"{video_id}.txt"
                 logger.info(f"Saving transcription results to: {text_path}")
                 
-                with open(text_path, "w", encoding="utf-8") as f:
-                    if "chunks" in result:
-                        for chunk in result["chunks"]:
-                            f.write(f"[{chunk['timestamp'][0]:.1f}s -> {chunk['timestamp'][1]:.1f}s]\n")
-                            f.write(f"Text: {chunk['text']}\n\n")
-                    else:
-                        f.write(f"Text: {result['text']}\n")
+                # Ensure the directory exists and has proper permissions
+                try:
+                    text_path.parent.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"Ensured directory exists: {text_path.parent}")
+                except Exception as e:
+                    logger.error(f"Error creating directory {text_path.parent}: {str(e)}")
+                    return False
                 
-                logger.info("Successfully saved transcription results")
+                try:
+                    with open(text_path, "w", encoding="utf-8") as f:
+                        f.write(f"{result['text']}\n")
+                    logger.info("Successfully saved transcription results")
+                except PermissionError as e:
+                    logger.error(f"Permission denied writing to {text_path}: {str(e)}")
+                    logger.error(f"Current working directory: {os.getcwd()}")
+                    logger.error(f"Directory permissions: {oct(os.stat(text_path.parent).st_mode)[-3:]}")
+                    return False
+                except Exception as e:
+                    logger.error(f"Error writing to {text_path}: {str(e)}")
+                    return False
                 
             except Exception as e:
                 logger.error(f"Error in transcription: {str(e)}")
@@ -210,10 +213,12 @@ class AudioTextService:
             # Save to database
             logger.info("Saving text content to database")
             try:
+                # Use relative path for database storage
+                relative_text_path = f"../downloaded_text/{video_id}.txt"
                 await self.create_text_content(
                     video_id=video_id,
                     title=video_info.get("title", ""),
-                    text_file_path=str(text_path)
+                    text_file_path=relative_text_path
                 )
                 logger.info("Successfully saved text content to database")
             except Exception as e:
