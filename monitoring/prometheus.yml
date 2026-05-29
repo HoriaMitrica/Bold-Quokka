@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: db-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["db-service:8001"]
+
+  - job_name: youtube-audio-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["youtube-audio-service:8003"]
+
+  - job_name: audio-text-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["audio-text-service:8002"]
+
+  - job_name: rag-indexer
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["rag-indexer:8005"]
+
+  - job_name: chat-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["chat-service:8006"]
+
+  - job_name: qdrant-admin
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["qdrant-admin:8007"]

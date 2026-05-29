@@ -1,13 +1,17 @@
+import os
 from fastapi import FastAPI, HTTPException, Path, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, PointStruct
+from prometheus_fastapi_instrumentator import Instrumentator
 
 app = FastAPI(title="Qdrant Admin API")
 
-# Use 'qdrant' as host if running in Docker Compose, otherwise 'localhost'
-qdrant = QdrantClient(host="localhost", port=6333)
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 class CreateCollectionRequest(BaseModel):
     name: str
@@ -69,3 +73,17 @@ def list_points(collection_name: str, limit: int = Query(10, ge=1, le=100)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) 
+
+
+@app.get("/health")
+def health_check():
+    try:
+        collections = qdrant.get_collections()
+        return {
+            "status": "healthy",
+            "qdrant_host": QDRANT_HOST,
+            "qdrant_port": QDRANT_PORT,
+            "collections_count": len(collections.collections),
+        }
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}

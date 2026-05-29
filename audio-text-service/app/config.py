@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     
     # Hugging Face Configuration
     hf_token: str = ""
+    whisper_model_id: str = "distil-whisper/distil-large-v3"
     
     # Service Port
     port: int = 8002

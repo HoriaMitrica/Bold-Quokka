@@ -8,6 +8,7 @@ import httpx
 import json
 from dotenv import load_dotenv
 from .config import get_settings
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Load environment variables from .env file
 load_dotenv()
@@ -23,6 +24,7 @@ app = FastAPI(
     docs_url=f"{settings.api_prefix}/docs",
     redoc_url=f"{settings.api_prefix}/redoc",
 )
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # Configure logging
 logging.basicConfig(
@@ -44,7 +46,21 @@ async def root():
 
 @app.get(f"{settings.api_prefix}/health")
 async def health_check():
-    return {"status": "healthy"}
+    db_health_url = f"{settings.db_service_url}{settings.api_prefix}/health"
+    db_healthy = False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(db_health_url)
+            db_healthy = response.status_code == 200
+    except Exception:
+        db_healthy = False
+
+    status = "healthy" if db_healthy else "degraded"
+    return {
+        "status": status,
+        "database_service_reachable": db_healthy,
+        "audio_dir": str(AUDIO_DIR),
+    }
 
 @app.post(f"{settings.api_prefix}/extract-audio")
 async def extract_audio(request: YouTubeRequest):

@@ -31,7 +31,7 @@ class AudioTextService:
             
             logger.info("Loading Whisper model...")
             try:
-                model_id = "openai/whisper-large-v3-turbo"
+                model_id = settings.whisper_model_id
                 torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
                 
                 self.whisper_model = AutoModelForSpeechSeq2Seq.from_pretrained(

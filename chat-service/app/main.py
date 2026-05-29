@@ -8,19 +8,25 @@ from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 import numpy as np
 import json
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Chat Service")
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # Qdrant client
-qdrant = QdrantClient(host="localhost", port=6333)
+QDRANT_HOST = os.environ.get("CHAT_SERVICE_QDRANT_HOST", os.environ.get("QDRANT_HOST", "localhost"))
+QDRANT_PORT = int(os.environ.get("CHAT_SERVICE_QDRANT_PORT", os.environ.get("QDRANT_PORT", "6333")))
+qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 # Ollama configuration
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
+OLLAMA_URL = os.environ.get("CHAT_SERVICE_OLLAMA_URL", os.environ.get("OLLAMA_URL", "http://localhost:11434"))
+OLLAMA_MODEL = os.environ.get("CHAT_SERVICE_OLLAMA_MODEL", os.environ.get("OLLAMA_MODEL", "llama3.2"))
+MIN_SCORE_THRESHOLD = float(os.environ.get("CHAT_SERVICE_MIN_SCORE_THRESHOLD", "0.25"))
+MAX_CONTEXT_CHARS = int(os.environ.get("CHAT_SERVICE_MAX_CONTEXT_CHARS", "6500"))
 
 # Embedding model (same as RAG indexer)
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
@@ -62,6 +68,8 @@ def search_qdrant(collection: str, query: str, max_results: int = 5):
         # Format results
         relevant_results = []
         for point in search_result:
+            if point.score is None or point.score < MIN_SCORE_THRESHOLD:
+                continue
             relevant_results.append({
                 "text": point.payload.get("text", ""),
                 "video_id": point.payload.get("video_id", ""),
@@ -79,10 +87,17 @@ def search_qdrant(collection: str, query: str, max_results: int = 5):
 async def generate_response_with_ollama(question: str, context: List[dict]) -> str:
     """Generate response using Ollama"""
     try:
-        context_text = "\n\n".join([
-            f"Source {i+1} (Video: {item['title']}, Score: {item['score']:.3f}):\n{item['text']}"
-            for i, item in enumerate(context)
-        ])
+        ranked_context = sorted(context, key=lambda item: item.get("score", 0), reverse=True)
+        packed_sources = []
+        total_chars = 0
+        for i, item in enumerate(ranked_context):
+            block = f"Source {i+1} (Video: {item['title']}, Score: {item['score']:.3f}):\n{item['text']}"
+            if total_chars + len(block) > MAX_CONTEXT_CHARS:
+                break
+            packed_sources.append(block)
+            total_chars += len(block)
+
+        context_text = "\n\n".join(packed_sources)
 
         prompt = f"""You are a helpful assistant that provides clear, concise answers based on the provided context. 
 Your task is to synthesize the information and provide a natural, readable response that directly answers the question.
@@ -254,6 +269,8 @@ async def health_check():
             "status": "healthy",
             "qdrant_connected": True,
             "qdrant_collections": len(collections.collections),
+            "qdrant_host": QDRANT_HOST,
+            "qdrant_port": QDRANT_PORT,
             "embedding_model": EMBEDDING_MODEL_NAME,
             "embedding_size": len(test_embedding[0]),
             "ollama_connected": ollama_healthy,

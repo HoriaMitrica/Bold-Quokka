@@ -3,3 +3,6 @@ uvicorn
 sentence-transformers
 nltk
 qdrant-client 
+httpx
+langchain-text-splitters
+prometheus-fastapi-instrumentator

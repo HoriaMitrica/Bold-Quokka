@@ -6,6 +6,7 @@ import httpx
 from .config import get_settings
 from .services import AudioTextService
 import os
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Get settings
 settings = get_settings()
@@ -23,6 +24,7 @@ app = FastAPI(
     redoc_url=f"{settings.api_prefix}/redoc",
     swagger_ui_parameters={"defaultModelsExpandDepth": -1}
 )
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # Add CORS middleware
 app.add_middleware(
@@ -50,9 +52,20 @@ async def root():
 @app.get(f"{settings.api_prefix}/health")
 async def health_check():
     """Health check endpoint"""
+    db_health_url = f"{settings.db_service_url}{settings.api_prefix}/health"
+    db_healthy = False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(db_health_url)
+            db_healthy = response.status_code == 200
+    except Exception:
+        db_healthy = False
+
+    status = "healthy" if (audio_text_service.whisper_pipeline is not None and db_healthy) else "degraded"
     return {
-        "status": "healthy",
-        "model_loaded": audio_text_service.whisper_pipeline is not None
+        "status": status,
+        "model_loaded": audio_text_service.whisper_pipeline is not None,
+        "database_service_reachable": db_healthy,
     }
 
 @app.post(f"{settings.api_prefix}/process-audio/{{video_id}}")

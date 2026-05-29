@@ -6,16 +6,23 @@ services:
     ports:
       - "${DB_SERVICE_PORT}:${DB_SERVICE_PORT}"
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_HOST=db
-      - POSTGRES_PORT=${POSTGRES_PORT}
-      - PORT=${DB_SERVICE_PORT}
+      - DB_SERVICE_POSTGRES_USER=${POSTGRES_USER}
+      - DB_SERVICE_POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_SERVICE_POSTGRES_DB=${POSTGRES_DB}
+      - DB_SERVICE_POSTGRES_HOST=db
+      - DB_SERVICE_POSTGRES_PORT=5432
+      - DB_SERVICE_PORT=${DB_SERVICE_PORT}
     volumes:
       - ./db-service:/app
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${DB_SERVICE_PORT}/api/v1/health')\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   youtube-audio-service:
     build:
@@ -24,14 +31,21 @@ services:
     ports:
       - "${YOUTUBE_AUDIO_SERVICE_PORT}:${YOUTUBE_AUDIO_SERVICE_PORT}"
     environment:
-      - DB_SERVICE_URL=http://db-service:${DB_SERVICE_PORT}
-      - AUDIO_DIR=/downloaded_audio
-      - PORT=${YOUTUBE_AUDIO_SERVICE_PORT}
+      - YOUTUBE_AUDIO_SERVICE_DB_SERVICE_URL=http://db-service:${DB_SERVICE_PORT}
+      - YOUTUBE_AUDIO_SERVICE_AUDIO_DIR=/downloaded_audio
+      - YOUTUBE_AUDIO_SERVICE_PORT=${YOUTUBE_AUDIO_SERVICE_PORT}
     volumes:
       - ./${AUDIO_DIR}:/downloaded_audio
       - ./youtube-audio-service:/app
     depends_on:
-      - db-service
+      db-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${YOUTUBE_AUDIO_SERVICE_PORT}/api/v1/health')\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   audio-text-service:
     build:
@@ -40,18 +54,27 @@ services:
     ports:
       - "${AUDIO_TEXT_SERVICE_PORT}:${AUDIO_TEXT_SERVICE_PORT}"
     environment:
-      - DB_SERVICE_URL=http://db-service:${DB_SERVICE_PORT}
-      - AUDIO_DIR=/downloaded_audio
-      - TEXT_DIR=/downloaded_text
-      - HF_TOKEN=${HF_TOKEN}
-      - PORT=${AUDIO_TEXT_SERVICE_PORT}
+      - AUDIO_TEXT_SERVICE_DB_SERVICE_URL=http://db-service:${DB_SERVICE_PORT}
+      - AUDIO_TEXT_SERVICE_AUDIO_DIR=/downloaded_audio
+      - AUDIO_TEXT_SERVICE_TEXT_DIR=/downloaded_text
+      - AUDIO_TEXT_SERVICE_HF_TOKEN=${HF_TOKEN}
+      - AUDIO_TEXT_SERVICE_WHISPER_MODEL_ID=${AUDIO_TEXT_SERVICE_WHISPER_MODEL_ID}
+      - AUDIO_TEXT_SERVICE_PORT=${AUDIO_TEXT_SERVICE_PORT}
     volumes:
       - ./${AUDIO_DIR}:/downloaded_audio
       - ./${TEXT_DIR}:/downloaded_text
       - ./audio-text-service:/app
     depends_on:
-      - db-service
-      - youtube-audio-service
+      db-service:
+        condition: service_healthy
+      youtube-audio-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${AUDIO_TEXT_SERVICE_PORT}/api/v1/health')\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   db:
     image: postgres:15
@@ -63,23 +86,161 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant
     ports:
-      - "${QDRANT_PORT}:${QDRANT_PORT}"
+      - "${QDRANT_PORT:-6333}:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    # Qdrant image has no python/curl/wget; host curl to :6333 is the real readiness signal.
+
+  rag-indexer:
+    build:
+      context: ./rag-indexer
+      dockerfile: Dockerfile
+    ports:
+      - "${RAG_INDEXER_PORT}:${RAG_INDEXER_PORT}"
+    environment:
+      - RAG_INDEXER_DB_SERVICE_URL=http://db-service:${DB_SERVICE_PORT}
+      - RAG_INDEXER_API_PREFIX=/api/v1
+      - RAG_INDEXER_QDRANT_HOST=qdrant
+      - RAG_INDEXER_QDRANT_PORT=${QDRANT_PORT}
+      - RAG_INDEXER_PORT=${RAG_INDEXER_PORT}
+    volumes:
+      - ./${TEXT_DIR}:/downloaded_text
+      - ./rag-indexer:/app
+    depends_on:
+      db-service:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${RAG_INDEXER_PORT}/health')\""]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  chat-service:
+    build:
+      context: ./chat-service
+      dockerfile: Dockerfile
+    ports:
+      - "${CHAT_SERVICE_PORT}:${CHAT_SERVICE_PORT}"
+    environment:
+      - CHAT_SERVICE_QDRANT_HOST=qdrant
+      - CHAT_SERVICE_QDRANT_PORT=${QDRANT_PORT}
+      - CHAT_SERVICE_OLLAMA_URL=${OLLAMA_URL}
+      - CHAT_SERVICE_OLLAMA_MODEL=${OLLAMA_MODEL}
+      - CHAT_SERVICE_PORT=${CHAT_SERVICE_PORT}
+    volumes:
+      - ./chat-service:/app
+    depends_on:
+      qdrant:
+        condition: service_started
+      rag-indexer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${CHAT_SERVICE_PORT}/health')\""]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
 
   qdrant-admin:
     build:
       context: ./qdrant-admin
       dockerfile: Dockerfile
     ports:
-      - "8007:8007"
+      - "${QDRANT_ADMIN_PORT}:8007"
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=${QDRANT_PORT}
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8007/collections')\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    ports:
+      - "${PGADMIN_PORT}:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "${PROMETHEUS_PORT}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      db-service:
+        condition: service_healthy
+      youtube-audio-service:
+        condition: service_healthy
+      audio-text-service:
+        condition: service_healthy
+      rag-indexer:
+        condition: service_healthy
+      chat-service:
+        condition: service_healthy
+      qdrant-admin:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_YOUTUBE_AUDIO_SERVICE_URL=${VITE_YOUTUBE_AUDIO_SERVICE_URL}
+        - VITE_AUDIO_TEXT_SERVICE_URL=${VITE_AUDIO_TEXT_SERVICE_URL}
+        - VITE_RAG_INDEXER_URL=${VITE_RAG_INDEXER_URL}
+        - VITE_CHAT_SERVICE_URL=${VITE_CHAT_SERVICE_URL}
+        - VITE_DB_SERVICE_URL=${VITE_DB_SERVICE_URL}
+        - VITE_DEFAULT_COLLECTION=${VITE_DEFAULT_COLLECTION}
+    ports:
+      - "${FRONTEND_PORT}:80"
+    depends_on:
+      chat-service:
+        condition: service_healthy
+      rag-indexer:
+        condition: service_healthy
+      audio-text-service:
+        condition: service_healthy
+      youtube-audio-service:
+        condition: service_healthy
+      db-service:
+        condition: service_healthy
 volumes:
   postgres_data:
   qdrant_data:
+  pgadmin_data:
+  grafana_data:

@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import List
 import logging
 from uuid import UUID
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from . import models, schemas
 from .database import engine, get_db
@@ -21,6 +23,7 @@ app = FastAPI(
     docs_url=f"/docs",
     redoc_url=f"/redoc"
 )
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +35,20 @@ async def root():
 
 @app.get(f"{settings.api_prefix}/health")
 async def health_check():
-    return {"status": "healthy"}
+    db = None
+    try:
+        db = next(get_db())
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database_connected": True,
+            "api_prefix": settings.api_prefix,
+        }
+    except Exception as e:
+        return {"status": "unhealthy", "database_connected": False, "error": str(e)}
+    finally:
+        if db is not None:
+            db.close()
 
 @app.post(f"{settings.api_prefix}/videos", response_model=schemas.Video)
 def create_video(video: schemas.VideoCreate, db: Session = Depends(get_db)):
