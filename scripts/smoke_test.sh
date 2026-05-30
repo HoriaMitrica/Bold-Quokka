@@ -13,28 +13,78 @@ set -a
 source .env
 set +a
 
-echo "Running health checks..."
-curl -fsS "http://localhost:${DB_SERVICE_PORT}/api/v1/health" >/dev/null
-curl -fsS "http://localhost:${YOUTUBE_AUDIO_SERVICE_PORT}/api/v1/health" >/dev/null
-curl -fsS "http://localhost:${AUDIO_TEXT_SERVICE_PORT}/api/v1/health" >/dev/null
-curl -fsS "http://localhost:${RAG_INDEXER_PORT}/health" >/dev/null
-curl -fsS "http://localhost:${CHAT_SERVICE_PORT}/health" >/dev/null
-curl -fsS "http://localhost:${QDRANT_ADMIN_PORT:-8007}/health" >/dev/null
+USE_GATEWAY=false
+FULL_TEST=false
+YT_URL=""
+COLLECTION="batem-palma"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gateway)
+      USE_GATEWAY=true
+      shift
+      ;;
+    --full)
+      FULL_TEST=true
+      shift
+      if [[ $# -gt 0 && "$1" != --* ]]; then
+        YT_URL="$1"
+        shift
+      fi
+      if [[ $# -gt 0 && "$1" != --* ]]; then
+        COLLECTION="$1"
+        shift
+      fi
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      echo "Usage: ./scripts/smoke_test.sh [--gateway] [--full <youtube_url> [collection]]"
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "${USE_GATEWAY}" == "true" ]]; then
+  BASE_URL="http://localhost:${API_GATEWAY_PORT:-8082}"
+  echo "Running health checks via API gateway (${BASE_URL})..."
+  curl -fsS "${BASE_URL}/db/api/v1/health" >/dev/null
+  curl -fsS "${BASE_URL}/youtube/api/v1/health" >/dev/null
+  curl -fsS "${BASE_URL}/audio/api/v1/health" >/dev/null
+  curl -fsS "${BASE_URL}/rag/health" >/dev/null
+  curl -fsS "${BASE_URL}/chat/health" >/dev/null
+else
+  echo "Running health checks..."
+  curl -fsS "http://localhost:${DB_SERVICE_PORT}/api/v1/health" >/dev/null
+  curl -fsS "http://localhost:${YOUTUBE_AUDIO_SERVICE_PORT}/api/v1/health" >/dev/null
+  curl -fsS "http://localhost:${AUDIO_TEXT_SERVICE_PORT}/api/v1/health" >/dev/null
+  curl -fsS "http://localhost:${RAG_INDEXER_PORT}/health" >/dev/null
+  curl -fsS "http://localhost:${CHAT_SERVICE_PORT}/health" >/dev/null
+  curl -fsS "http://localhost:${QDRANT_ADMIN_PORT:-8007}/health" >/dev/null
+fi
 
 echo "Health checks passed."
 
-if [[ "${1:-}" == "--full" ]]; then
-  if [[ -z "${2:-}" ]]; then
-    echo "Usage: ./scripts/smoke_test.sh --full <youtube_url>"
+if [[ "${FULL_TEST}" == "true" ]]; then
+  if [[ -z "${YT_URL}" ]]; then
+    echo "Usage: ./scripts/smoke_test.sh [--gateway] --full <youtube_url> [collection]"
     exit 1
   fi
 
-  YT_URL="$2"
-  COLLECTION="${3:-batem-palma}"
+  if [[ "${USE_GATEWAY}" == "true" ]]; then
+    YOUTUBE_BASE="${BASE_URL}/youtube"
+    AUDIO_BASE="${BASE_URL}/audio"
+    RAG_BASE="${BASE_URL}/rag"
+    CHAT_BASE="${BASE_URL}/chat"
+  else
+    YOUTUBE_BASE="http://localhost:${YOUTUBE_AUDIO_SERVICE_PORT}"
+    AUDIO_BASE="http://localhost:${AUDIO_TEXT_SERVICE_PORT}"
+    RAG_BASE="http://localhost:${RAG_INDEXER_PORT}"
+    CHAT_BASE="http://localhost:${CHAT_SERVICE_PORT}"
+  fi
 
   echo "Extracting audio..."
   EXTRACT_RESPONSE="$(
-    curl -fsS -X POST "http://localhost:${YOUTUBE_AUDIO_SERVICE_PORT}/api/v1/extract-audio" \
+    curl -fsS -X POST "${YOUTUBE_BASE}/api/v1/extract-audio" \
       -H "Content-Type: application/json" \
       -d "{\"url\":\"${YT_URL}\"}"
   )"
@@ -44,16 +94,16 @@ if [[ "${1:-}" == "--full" ]]; then
   echo "Extracted video id: ${VIDEO_ID} (${TITLE})"
 
   echo "Transcribing audio..."
-  curl -fsS -X POST "http://localhost:${AUDIO_TEXT_SERVICE_PORT}/api/v1/process-audio/${VIDEO_ID}" >/dev/null
+  curl -fsS -X POST "${AUDIO_BASE}/api/v1/process-audio/${VIDEO_ID}" >/dev/null
 
   echo "Indexing transcript into collection '${COLLECTION}'..."
-  curl -fsS -X POST "http://localhost:${RAG_INDEXER_PORT}/index-by-video-id?space=${COLLECTION}" \
+  curl -fsS -X POST "${RAG_BASE}/index-by-video-id?space=${COLLECTION}" \
     -H "Content-Type: application/json" \
     -d "{\"video_id\":\"${VIDEO_ID}\"}" >/dev/null
 
   echo "Running chat query..."
   CHAT_RESPONSE="$(
-    curl -fsS -X POST "http://localhost:${CHAT_SERVICE_PORT}/chat" \
+    curl -fsS -X POST "${CHAT_BASE}/chat" \
       -H "Content-Type: application/json" \
       -d "{\"question\":\"Cine a fost concurentul principal?\",\"collection\":\"${COLLECTION}\",\"max_results\":5}"
   )"
