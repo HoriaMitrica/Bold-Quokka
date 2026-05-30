@@ -5,7 +5,6 @@ import httpx
 from typing import List, Dict, Any
 from datetime import datetime
 import torch
-import torchaudio
 import warnings
 import numpy as np
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
@@ -147,39 +146,20 @@ class AudioTextService:
                 logger.error(f"Audio file not found at {audio_path}")
                 return False
             
-            # Preprocess audio
-            logger.info("Preprocessing audio...")
+            # Transcribe directly from the WAV file (Whisper pipeline loads audio itself).
+            logger.info("Starting transcription...")
             try:
-                # Load and normalize audio
-                waveform, sample_rate = torchaudio.load(audio_path)
-                if waveform.shape[0] > 1:
-                    waveform = torch.mean(waveform, dim=0, keepdim=True)
-                
-                # Apply noise reduction and normalization
-                waveform = waveform / torch.max(torch.abs(waveform))
-                
-                # Save preprocessed audio
-                preprocessed_path = f"/tmp/preprocessed_{video_id}.wav"
-                torchaudio.save(preprocessed_path, waveform, sample_rate)
-                
-                # Transcribe the entire audio
-                logger.info("Starting transcription...")
                 result = self.whisper_pipeline(
-                    preprocessed_path,
+                    audio_path,
                     chunk_length_s=30,
                     stride_length_s=5,
                     generate_kwargs={
                         "language": "romanian",
-                        "task": "transcribe"
-                    }
+                        "task": "transcribe",
+                    },
                 )
-                
-                # Clean up preprocessed file
-                os.remove(preprocessed_path)
-                
-                # Save transcription results
-                # Use absolute path to ensure we write to the correct directory
-                text_path = Path.cwd().parent / "downloaded_text" / f"{video_id}.txt"
+
+                text_path = settings.text_dir / f"{video_id}.txt"
                 logger.info(f"Saving transcription results to: {text_path}")
                 
                 # Ensure the directory exists and has proper permissions
@@ -214,7 +194,7 @@ class AudioTextService:
             logger.info("Saving text content to database")
             try:
                 # Use relative path for database storage
-                relative_text_path = f"../downloaded_text/{video_id}.txt"
+                relative_text_path = str(settings.text_dir / f"{video_id}.txt")
                 await self.create_text_content(
                     video_id=video_id,
                     title=video_info.get("title", ""),
