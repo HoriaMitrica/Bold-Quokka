@@ -24,6 +24,7 @@ server {
         add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Content-Type" always;
 
+        include /etc/nginx/hide-upstream-cors.inc;
         proxy_pass http://youtube-audio-service:${YOUTUBE_AUDIO_SERVICE_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -45,6 +46,7 @@ server {
         add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Content-Type" always;
 
+        include /etc/nginx/hide-upstream-cors.inc;
         proxy_pass http://audio-text-service:${AUDIO_TEXT_SERVICE_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -66,6 +68,7 @@ server {
         add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Content-Type" always;
 
+        include /etc/nginx/hide-upstream-cors.inc;
         proxy_pass http://rag-indexer:${RAG_INDEXER_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -87,6 +90,7 @@ server {
         add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Content-Type" always;
 
+        include /etc/nginx/hide-upstream-cors.inc;
         proxy_pass http://chat-service:${CHAT_SERVICE_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -108,6 +112,7 @@ server {
         add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Content-Type" always;
 
+        include /etc/nginx/hide-upstream-cors.inc;
         proxy_pass http://db-service:${DB_SERVICE_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

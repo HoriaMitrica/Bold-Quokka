@@ -180,7 +180,7 @@ services:
     environment:
       - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}
       - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD}
-      - PGADMIN_CONFIG_SCRIPT_NAME=/pgadmin
+      - PGADMIN_CONFIG_SCRIPT_NAME="/pgadmin"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
