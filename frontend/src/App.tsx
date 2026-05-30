@@ -131,7 +131,6 @@ function App() {
   ) => {
     let videoId = resolvedVideoId ?? api.extractVideoId(url);
     let extractSkipped = false;
-    let transcribeSkipped = false;
 
     if (startAt === "extract") {
       updateRun(runId, { extractStatus: "running" });
@@ -171,7 +170,6 @@ function App() {
     if (startAt !== "index") {
       const videoState = videoId ? await refreshVideoState(videoId) : null;
       if (shouldSkipTranscribe(videoState)) {
-        transcribeSkipped = true;
         updateRun(runId, {
           transcribeStatus: "success",
           transcribeSkipped: true,
