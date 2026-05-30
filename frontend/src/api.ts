@@ -5,6 +5,7 @@ import type {
   ExtractAudioResponse,
   IndexByVideoIdResponse,
   ProcessAudioResponse,
+  VideoRecord,
 } from "./types";
 
 class ApiError extends Error {
@@ -55,6 +56,34 @@ async function request<T>(
 }
 
 export const api = {
+  extractVideoId(youtubeUrl: string): string | null {
+    try {
+      const url = new URL(youtubeUrl.trim());
+      if (url.hostname === "youtu.be" || url.hostname === "www.youtu.be") {
+        const id = url.pathname.replace(/^\//, "").split("/")[0];
+        return id || null;
+      }
+      return url.searchParams.get("v");
+    } catch {
+      return null;
+    }
+  },
+
+  async getVideo(videoId: string): Promise<VideoRecord | null> {
+    try {
+      return await request<VideoRecord>(
+        `${config.dbServiceUrl}/api/v1/videos/${encodeURIComponent(videoId)}`,
+        undefined,
+        15000
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
+
   extractAudio(youtubeUrl: string): Promise<ExtractAudioResponse> {
     return request(`${config.youtubeServiceUrl}/api/v1/extract-audio`, {
       method: "POST",

@@ -3,7 +3,14 @@ import type { FormEvent } from "react";
 import "./App.css";
 import { api, ApiError } from "./api";
 import { config } from "./config";
-import type { ChatResponse, PipelineRun, ServiceHealthItem } from "./types";
+import {
+  extractOrRecover,
+  formatStepStatus,
+  refreshVideoState,
+  resolveVideoForUrl,
+  shouldSkipTranscribe,
+} from "./pipeline";
+import type { ChatResponse, PipelineRun, ServiceHealthItem, VideoRecord } from "./types";
 
 const serviceHealthEndpoints = [
   { name: "youtube-audio-service", url: `${config.youtubeServiceUrl}/api/v1/health` },
@@ -16,6 +23,8 @@ const serviceHealthEndpoints = [
 function App() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [collection, setCollection] = useState(config.defaultCollection);
+  const [knownVideo, setKnownVideo] = useState<VideoRecord | null>(null);
+  const [knownVideoLoading, setKnownVideoLoading] = useState(false);
   const [pipelineInProgress, setPipelineInProgress] = useState(false);
   const [pipelineRuns, setPipelineRuns] = useState<PipelineRun[]>([]);
 
@@ -77,6 +86,114 @@ function App() {
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const url = youtubeUrl.trim();
+    if (!url) {
+      setKnownVideo(null);
+      return;
+    }
+
+    let cancelled = false;
+    setKnownVideoLoading(true);
+
+    resolveVideoForUrl(url)
+      .then((video) => {
+        if (!cancelled) {
+          setKnownVideo(video);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setKnownVideo(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setKnownVideoLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [youtubeUrl]);
+
+  const resolvedVideoId = useMemo(
+    () => knownVideo?.video_id ?? api.extractVideoId(youtubeUrl.trim()),
+    [knownVideo, youtubeUrl]
+  );
+
+  const executePipeline = async (
+    runId: string,
+    url: string,
+    targetCollection: string,
+    startAt: "extract" | "transcribe" | "index"
+  ) => {
+    let videoId = resolvedVideoId ?? api.extractVideoId(url);
+    let extractSkipped = false;
+    let transcribeSkipped = false;
+
+    if (startAt === "extract") {
+      updateRun(runId, { extractStatus: "running" });
+      const existingVideo = await resolveVideoForUrl(url);
+      const extract = await extractOrRecover(url, existingVideo);
+      extractSkipped = Boolean(extract.skipped);
+      videoId = extract.video_id;
+      updateRun(runId, {
+        extractStatus: "success",
+        extractSkipped,
+        transcribeStatus: "running",
+        videoId: extract.video_id,
+        title: extract.title,
+      });
+    } else if (!videoId) {
+      throw new ApiError("Could not determine video_id from URL");
+    } else if (startAt === "transcribe") {
+      updateRun(runId, {
+        extractStatus: "success",
+        extractSkipped: true,
+        transcribeStatus: "running",
+        videoId,
+        title: knownVideo?.title,
+      });
+    } else {
+      updateRun(runId, {
+        extractStatus: "success",
+        extractSkipped: true,
+        transcribeStatus: "success",
+        transcribeSkipped: true,
+        indexStatus: "running",
+        videoId,
+        title: knownVideo?.title,
+      });
+    }
+
+    if (startAt !== "index") {
+      const videoState = videoId ? await refreshVideoState(videoId) : null;
+      if (shouldSkipTranscribe(videoState)) {
+        transcribeSkipped = true;
+        updateRun(runId, {
+          transcribeStatus: "success",
+          transcribeSkipped: true,
+          indexStatus: "running",
+        });
+      } else {
+        await api.processAudio(videoId!);
+        updateRun(runId, {
+          transcribeStatus: "success",
+          indexStatus: "running",
+        });
+      }
+    }
+
+    await api.indexByVideoId(videoId!, targetCollection);
+    updateRun(runId, {
+      indexStatus: "success",
+    });
+
+    await loadCollections();
+  };
+
   const updateRun = (runId: string, patch: Partial<PipelineRun>) => {
     setPipelineRuns((current) =>
       current.map((run) => (run.id === runId ? { ...run, ...patch } : run))
@@ -104,26 +221,7 @@ function App() {
     setPipelineInProgress(true);
 
     try {
-      const extract = await api.extractAudio(initialRun.youtubeUrl);
-      updateRun(runId, {
-        extractStatus: "success",
-        transcribeStatus: "running",
-        videoId: extract.video_id,
-        title: extract.title,
-      });
-
-      await api.processAudio(extract.video_id);
-      updateRun(runId, {
-        transcribeStatus: "success",
-        indexStatus: "running",
-      });
-
-      await api.indexByVideoId(extract.video_id, initialRun.collection);
-      updateRun(runId, {
-        indexStatus: "success",
-      });
-
-      await loadCollections();
+      await executePipeline(runId, initialRun.youtubeUrl, initialRun.collection, "extract");
     } catch (error) {
       const message =
         error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Unknown error";
@@ -137,6 +235,64 @@ function App() {
           if (run.extractStatus === "running") {
             return { ...run, extractStatus: "failed", error: message };
           }
+          if (run.transcribeStatus === "running") {
+            return { ...run, transcribeStatus: "failed", error: message };
+          }
+          if (run.indexStatus === "running") {
+            return { ...run, indexStatus: "failed", error: message };
+          }
+
+          return { ...run, error: message };
+        })
+      );
+    } finally {
+      setPipelineInProgress(false);
+    }
+  };
+
+  const runFromStep = async (startAt: "transcribe" | "index") => {
+    if (!collection.trim()) {
+      return;
+    }
+    if (!resolvedVideoId && !youtubeUrl.trim()) {
+      return;
+    }
+
+    const runId = crypto.randomUUID();
+    const initialRun: PipelineRun = {
+      id: runId,
+      startedAt: new Date().toISOString(),
+      youtubeUrl: youtubeUrl.trim() || resolvedVideoId || "",
+      collection: collection.trim(),
+      extractStatus: startAt === "index" ? "success" : "idle",
+      transcribeStatus: startAt === "index" ? "success" : "running",
+      indexStatus: startAt === "index" ? "running" : "idle",
+      extractSkipped: true,
+      transcribeSkipped: startAt === "index",
+      videoId: resolvedVideoId ?? undefined,
+      title: knownVideo?.title,
+    };
+
+    setPipelineRuns((current) => [initialRun, ...current].slice(0, 10));
+    setPipelineInProgress(true);
+
+    try {
+      await executePipeline(
+        runId,
+        initialRun.youtubeUrl,
+        initialRun.collection,
+        startAt
+      );
+    } catch (error) {
+      const message =
+        error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Unknown error";
+
+      setPipelineRuns((current) =>
+        current.map((run) => {
+          if (run.id !== runId) {
+            return run;
+          }
+
           if (run.transcribeStatus === "running") {
             return { ...run, transcribeStatus: "failed", error: message };
           }
@@ -189,7 +345,16 @@ function App() {
       <section className="grid">
         <article className="card">
           <h2>Guided Pipeline</h2>
-          <p className="muted">One-click flow: Extract audio to Transcribe to Index</p>
+          <p className="muted">
+            One-click flow: Extract → Transcribe → Index. Skips steps already in Postgres.
+          </p>
+          {knownVideoLoading && <p className="muted">Checking database for this video…</p>}
+          {knownVideo && (
+            <p className="muted">
+              Found in DB: <strong>{knownVideo.title}</strong> — audio: yes, text:{" "}
+              {knownVideo.text_status === "TEXT" ? "yes" : "no"}
+            </p>
+          )}
           <form className="stack" onSubmit={runPipeline}>
             <label className="field">
               <span>YouTube URL</span>
@@ -213,6 +378,22 @@ function App() {
               <button type="submit" disabled={pipelineInProgress}>
                 {pipelineInProgress ? "Running..." : "Run Pipeline"}
               </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={pipelineInProgress || !resolvedVideoId}
+                onClick={() => runFromStep("transcribe")}
+              >
+                Transcribe Only
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={pipelineInProgress || !resolvedVideoId}
+                onClick={() => runFromStep("index")}
+              >
+                Index Only
+              </button>
               <button type="button" className="secondary" onClick={rerunLatest}>
                 Reuse Last Input
               </button>
@@ -233,9 +414,15 @@ function App() {
                     video_id: {run.videoId ?? "pending"} | collection: {run.collection}
                   </p>
                   <div className="statusRow">
-                    <span className={`status ${run.extractStatus}`}>extract: {run.extractStatus}</span>
-                    <span className={`status ${run.transcribeStatus}`}>
-                      transcribe: {run.transcribeStatus}
+                    <span
+                      className={`status ${run.extractSkipped ? "skipped" : run.extractStatus}`}
+                    >
+                      extract: {formatStepStatus(run.extractStatus, run.extractSkipped)}
+                    </span>
+                    <span
+                      className={`status ${run.transcribeSkipped ? "skipped" : run.transcribeStatus}`}
+                    >
+                      transcribe: {formatStepStatus(run.transcribeStatus, run.transcribeSkipped)}
                     </span>
                     <span className={`status ${run.indexStatus}`}>index: {run.indexStatus}</span>
                   </div>

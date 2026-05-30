@@ -131,6 +131,11 @@ button.secondary {
   background: #dff6e5;
 }
 
+.status.skipped {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
 .status.degraded {
   background: #fff3db;
 }

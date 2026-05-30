@@ -2,6 +2,7 @@ export type HealthStatus = "healthy" | "degraded" | "unhealthy" | "unknown";
 
 export interface ExtractAudioResponse {
   status: string;
+  skipped?: boolean;
   video_id: string;
   title: string;
   audio_file: string;
@@ -10,9 +11,18 @@ export interface ExtractAudioResponse {
 
 export interface ProcessAudioResponse {
   status: string;
+  skipped?: boolean;
   message: string;
   video_id: string;
   audio_path: string;
+}
+
+export interface VideoRecord {
+  video_id: string;
+  title: string;
+  audio_file_path: string;
+  duration?: number;
+  text_status: "NOT_TEXT" | "PROCESSING" | "TEXT";
 }
 
 export interface IndexByVideoIdResponse {
@@ -53,6 +63,8 @@ export interface PipelineRun {
   extractStatus: "idle" | "running" | "success" | "failed";
   transcribeStatus: "idle" | "running" | "success" | "failed";
   indexStatus: "idle" | "running" | "success" | "failed";
+  extractSkipped?: boolean;
+  transcribeSkipped?: boolean;
   error?: string;
 }
 
